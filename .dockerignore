@@ -1,0 +1,8 @@
+target/
+.git/
+node_modules/
+test-ledger/
+.anchor/
+**/*.log
+dashboard/report.json
+.DS_Store
