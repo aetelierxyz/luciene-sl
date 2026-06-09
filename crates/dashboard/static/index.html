@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CEX → AWS Colocation Oracle</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<style>
+  :root { --bg:#0b0f17; --panel:#131a26; --panel2:#1b2333; --line:#243149;
+          --txt:#e6edf6; --muted:#8aa0bf; --hi:#34d399; --mid:#fbbf24; --lo:#f87171;
+          --accent:#7c9cff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
+              font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
+  #app { display:grid; grid-template-columns: 420px 1fr; height:100vh; }
+  #side { overflow-y:auto; border-right:1px solid var(--line); padding:18px 18px 40px; }
+  #map { height:100vh; }
+  h1 { font-size:18px; margin:0 0 2px; letter-spacing:.2px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:14px; }
+  .prov { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 12px; font-size:12px; margin-bottom:16px; }
+  .prov b { color:var(--accent); }
+  .prov a { color:var(--accent); text-decoration:none; word-break:break-all; }
+  .prov .row { display:flex; justify-content:space-between; gap:10px; margin:3px 0; }
+  .prov .k { color:var(--muted); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:12px; position:relative; overflow:hidden; }
+  .card.primary { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .card .badge { position:absolute; top:12px; right:12px; font-size:10px; font-weight:700;
+                 text-transform:uppercase; letter-spacing:.5px; padding:3px 8px; border-radius:20px; }
+  .b-hi { background:rgba(52,211,153,.15); color:var(--hi); }
+  .b-mid{ background:rgba(251,191,36,.15); color:var(--mid); }
+  .b-lo { background:rgba(248,113,113,.15); color:var(--lo); }
+  .ex { font-size:16px; font-weight:700; text-transform:capitalize; }
+  .region { color:var(--accent); font-weight:600; font-size:13px; margin-top:1px; }
+  .city { color:var(--muted); font-size:12px; margin-bottom:8px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; font-size:12px; margin:8px 0; }
+  .grid .k { color:var(--muted); }
+  .grid .v { font-variant-numeric:tabular-nums; }
+  .coord { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
+           background:var(--bg); border:1px solid var(--line); border-radius:8px;
+           padding:6px 8px; margin:6px 0; }
+  .bars { margin:8px 0 4px; }
+  .bar { margin:5px 0; }
+  .bar .lab { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:2px; }
+  .bar .track { height:6px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .bar .fill { height:100%; border-radius:6px; }
+  .rat { color:var(--muted); font-size:12px; margin-top:6px; }
+  .meth { display:inline-block; font-size:10px; color:var(--muted); border:1px solid var(--line);
+          border-radius:6px; padding:1px 6px; margin-top:6px; }
+  .ftr { color:var(--muted); font-size:11px; margin-top:18px; }
+  .err { color:var(--lo); }
+  .pulse { width:8px; height:8px; border-radius:50%; background:var(--hi); display:inline-block;
+           margin-right:6px; box-shadow:0 0 0 0 rgba(52,211,153,.6); animation:p 2s infinite; }
+  @keyframes p { 0%{box-shadow:0 0 0 0 rgba(52,211,153,.5);} 70%{box-shadow:0 0 0 8px rgba(52,211,153,0);} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:var(--panel); color:var(--txt); }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>CEX → AWS Colocation Oracle</h1>
+    <div class="sub">Best place to colocate a trading server next to each exchange · 10&nbsp;km zones</div>
+    <div id="prov" class="prov">loading…</div>
+    <div id="cards"></div>
+    <div class="ftr">
+      <b>Score</b> = 0.6·region&nbsp;confidence + 0.4·stability. Region/lat/lon/confidence are read
+      live from the Solana account (JSON-RPC <code>getAccountInfo</code>, borsh-decoded);
+      stability (jitter, p95, success&nbsp;rate) is merged from the latest measured probe.
+      Region confidence is fully empirical where AWS IPs are exposed (Binance, Coinbase);
+      Kraken is Cloudflare-fronted so its origin region is not network-detectable.
+      Latency is from the probe host — colocating in-region drives it toward sub-ms.
+      Auto-refreshes every 30&nbsp;s.
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+const map = L.map('map', { worldCopyJump:true }).setView([25, 10], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains:'abcd', maxZoom:19
+}).addTo(map);
+
+let layer = L.layerGroup().addTo(map);
+
+function tier(c){ return c>=0.8 ? 'hi' : (c>=0.5 ? 'mid' : 'lo'); }
+function color(c){ return c>=0.8 ? '#34d399' : (c>=0.5 ? '#fbbf24' : '#f87171'); }
+function methodLabel(m){ return ({'aws-ip-range':'AWS IP-range match','ip-geo-nearest':'IP geolocation','curated':'curated knowledge'})[m] || m; }
+function bar(label, val){
+  const pct = Math.round((val||0)*100);
+  return '<div class="bar"><div class="lab"><span>'+label+'</span><span>'+pct+'%</span></div>'+
+         '<div class="track"><div class="fill" style="width:'+pct+'%;background:'+color(val||0)+'"></div></div></div>';
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/report', {cache:'no-store'});
+    const d = await r.json();
+    if(d.error){ document.getElementById('prov').innerHTML = '<span class="err">on-chain read failed: '+d.error+'</span>'; return; }
+    render(d);
+  }catch(e){
+    document.getElementById('prov').innerHTML = '<span class="err">fetch error: '+e+'</span>';
+  }
+}
+
+function render(d){
+  const exURL = 'https://explorer.solana.com/address/'+d.account+'?cluster='+d.cluster;
+  const gen = new Date(d.generated_unix*1000).toISOString().replace('T',' ').replace('.000Z',' UTC');
+  document.getElementById('prov').innerHTML =
+    '<div class="row"><span class="k"><span class="pulse"></span>source</span><span><b>Solana '+d.cluster+'</b> (on-chain)</span></div>'+
+    '<div class="row"><span class="k">program</span><span>'+short(d.program_id)+'</span></div>'+
+    '<div class="row"><span class="k">account</span><a href="'+exURL+'" target="_blank">'+short(d.account)+'</a></div>'+
+    '<div class="row"><span class="k">slot</span><span>'+d.slot.toLocaleString()+'</span></div>'+
+    '<div class="row"><span class="k">probed</span><span>'+gen+'</span></div>';
+
+  layer.clearLayers();
+  const cards = document.getElementById('cards');
+  cards.innerHTML = '';
+  const bounds = [];
+
+  d.venues.forEach((v, i) => {
+    const isPrimary = i === d.primary_index;
+    const col = color(v.score||v.confidence);
+    L.circle([v.lat, v.lon], { radius: v.radius_m, color: col, weight: isPrimary?3:1.5,
+      fillColor: col, fillOpacity: 0.12 }).addTo(layer);
+    L.circleMarker([v.lat, v.lon], { radius: 7, color: col, fillColor: col, fillOpacity: 0.9 })
+      .addTo(layer)
+      .bindPopup('<b style="text-transform:capitalize">'+v.exchange+'</b><br>AWS '+v.region+
+        '<br>'+v.region_city+'<br>'+v.lat.toFixed(4)+', '+v.lon.toFixed(4)+
+        '<br>radius '+(v.radius_m/1000)+' km · conf '+Math.round(v.confidence*100)+'%');
+    bounds.push([v.lat, v.lon]);
+
+    const evid = v.region_ip_total ? (v.region_evidence+'/'+v.region_ip_total+' IPs in region') : '—';
+    cards.insertAdjacentHTML('beforeend',
+      '<div class="card '+(isPrimary?'primary':'')+'">'+
+        '<span class="badge b-'+tier(v.score||v.confidence)+'">score '+Math.round((v.score||v.confidence)*100)+'%</span>'+
+        '<div class="ex">'+v.exchange+(isPrimary?' ★':'')+'</div>'+
+        '<div class="region">AWS '+v.region+'</div>'+
+        '<div class="city">'+v.region_city+'</div>'+
+        '<div class="coord">lat '+v.lat.toFixed(5)+' · lon '+v.lon.toFixed(5)+' · r '+(v.radius_m/1000)+' km</div>'+
+        '<div class="bars">'+
+          bar('region confidence', v.confidence)+
+          bar('stability', v.stability||0)+
+        '</div>'+
+        '<div class="grid">'+
+          '<span class="k">REST latency</span><span class="v">'+v.rest_median_ms+' ms'+(v.rest_jitter_ms?(' ±'+Math.round(v.rest_jitter_ms)):'')+'</span>'+
+          '<span class="k">REST p95</span><span class="v">'+(v.rest_p95_ms?Math.round(v.rest_p95_ms)+' ms':'—')+'</span>'+
+          '<span class="k">WSS latency</span><span class="v">'+v.ws_median_ms+' ms'+(v.ws_jitter_ms?(' ±'+Math.round(v.ws_jitter_ms)):'')+'</span>'+
+          '<span class="k">success</span><span class="v">'+(v.success_rate?Math.round(v.success_rate*100)+'%':'—')+'</span>'+
+          '<span class="k">region evidence</span><span class="v">'+evid+'</span>'+
+          '<span class="k">method</span><span class="v">'+methodLabel(v.method)+'</span>'+
+        '</div>'+
+        '<div class="rat">'+v.rationale+'</div>'+
+      '</div>');
+  });
+
+  if(bounds.length) map.fitBounds(bounds, { padding:[60,60], maxZoom:4 });
+}
+
+function short(s){ return s.length>16 ? s.slice(0,6)+'…'+s.slice(-6) : s; }
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

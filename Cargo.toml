@@ -5,6 +5,12 @@ resolver = "2"
 members = [
     # Solana Programs
     "programs/luciene_sl",
+    "programs/coloc_oracle",
+    # Off-chain colocation oracle
+    "crates/shared",
+    "crates/probe",
+    "crates/publisher",
+    "crates/dashboard",
 ]
 
 default-members = [
