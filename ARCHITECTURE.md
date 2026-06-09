@@ -1,0 +1,103 @@
+# Luciene SL — CEX Colocation Oracle
+
+A service that probes the **public** REST and WSS APIs of centralized exchanges
+(Binance, Coinbase, Kraken — spot markets), determines where each exchange's
+infrastructure physically lives (AWS region / availability zone), and emits an
+on-chain recommendation of the best place to colocate a trading server.
+
+The end deliverable is a **local dashboard** that shows, for each exchange and
+for the aggregate, a latitude / longitude point plus a **10 km radius** marking
+the best colocation spot — sourced from data stored **on Solana devnet**.
+
+## Why an oracle pattern?
+
+Solana programs cannot make outbound network calls. So the system is split:
+
+```
+   ┌─────────────┐   public REST/WSS    ┌──────────────────────┐
+   │   probe     │ ───────────────────► │  Binance / Coinbase  │
+   │ (off-chain) │ ◄─────────────────── │  / Kraken (spot)     │
+   └──────┬──────┘   latency samples    └──────────────────────┘
+          │
+          │  resolve endpoint IPs → match AWS ip-ranges.json
+          │  → geolocate (ip-api.com) → map to AWS region
+          │  → score & recommend (region centroid + 10km radius)
+          ▼
+   report.json  (local cache, "tangible values")
+          │
+          ▼
+   ┌─────────────┐   Anchor ix (borsh)  ┌──────────────────────┐
+   │  publisher  │ ───────────────────► │  Solana devnet        │
+   │ (off-chain) │                      │  luciene program      │
+   └─────────────┘                      │  ColocationReport PDA │
+                                        └──────────┬───────────┘
+                                                   │ getAccountInfo (JSON-RPC)
+                                                   ▼
+                                        ┌──────────────────────┐
+                                        │  dashboard (tokio)    │
+                                        │  Leaflet map + cards  │
+                                        └──────────────────────┘
+```
+
+## Components
+
+| Path                  | Kind          | Stack                                            |
+|-----------------------|---------------|--------------------------------------------------|
+| `programs/luciene_sl` | Anchor program| `anchor-lang` — adds `ColocationReport` account  |
+| `crates/shared`       | lib           | `serde`, region tables, scoring math, discriminators |
+| `crates/probe`        | bin           | `reqwest`, `tokio-tungstenite`, `async-rate-limiter` |
+| `crates/publisher`    | bin           | `solana-client`, `solana-sdk`, `borsh`           |
+| `crates/dashboard`    | bin           | `tokio` (hand-rolled HTTP), `reqwest` (RPC read) |
+
+## Methodology & confidence
+
+For each exchange we resolve **every** REST, WSS and direct/FIX hostname to its
+IPs, then determine the hosting AWS region by **evidence tally**, in order of
+confidence:
+
+1. **`aws-ip-range`** (HIGH, fully empirical) — IPs that fall inside an AWS
+   *compute-region* CIDR (`https://ip-ranges.amazonaws.com/ip-ranges.json`). We
+   count how many of the resolved IPs land in each region and pick the winner;
+   `confidence = 0.75 + 0.20 · (region_IPs / total_IPs)`. CloudFront/"GLOBAL"
+   edge ranges are excluded — they are CDN, not the engine.
+2. **`curated`** (LOW) — every endpoint is behind a CDN (we detect Cloudflare
+   ranges directly), so the origin region is **not network-detectable**. We fall
+   back to documented knowledge and say so, with low confidence.
+3. **`ip-geo-nearest`** (MEDIUM) — a non-AWS, non-CDN host: geolocate via
+   `ip-api.com` (no token) and snap to the nearest AWS region centroid.
+
+What this yields for the three venues (verified live):
+
+| Venue    | Detection | Evidence |
+|----------|-----------|----------|
+| Binance  | `aws-ip-range` → `ap-northeast-1` | `api1/2/3`, `stream`, `ws-api`, `data-api.binance.vision` all in Tokyo (~29/30 IPs) |
+| Coinbase | `aws-ip-range` → `us-east-1` | `api`/`ws-feed` are Cloudflare, but `ws-direct.exchange.coinbase.com` + `fix.exchange.coinbase.com` expose real `us-east-1` IPs |
+| Kraken   | `curated` → `eu-west-1` (low conf) | every endpoint is Cloudflare anycast (`104.17.x`); origin not detectable |
+
+### Latency, stability & score
+
+Each endpoint is sampled multiple times to produce **median / min / p95 / jitter
+(stddev) / success-rate**. Per venue:
+
+- `stability = success_rate · exp(−jitter_ms / 50)`  (0..1; high = stable)
+- `score = 0.6 · region_confidence + 0.4 · stability`  → ranks the venues and
+  selects the **primary pick**.
+
+> Probe-host RTT measures *laptop → endpoint* (often a CDN edge), so it is
+> **reported but not used to rank** venues — the colocation answer is "be in the
+> same AWS region as the engine", where latency collapses toward sub-millisecond.
+> Run the probe inside a candidate region for in-region RTT.
+
+The compact core (region, lat/lon, radius, confidence, method, latency) is stored
+**on-chain**; the richer stability telemetry is merged into the dashboard from the
+latest measured `report.json`. Every recommendation carries `method` + numeric
+`confidence` so the UI is honest about how each point was derived.
+
+## On-chain / off-chain data boundary
+
+- **On-chain (devnet):** only the final, compact recommendation per exchange
+  (region code, lat/lon in micro-degrees, radius, latency medians, confidence,
+  timestamp). Public data only — no API keys, no authenticated endpoints.
+- **Off-chain:** all probing, DNS, geolocation, scoring.
+
+See `RUNBOOK.md` for how to build and run everything (native + Docker).

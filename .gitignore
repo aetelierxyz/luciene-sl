@@ -8,6 +8,13 @@ yarn.lock
 node_modules/
 target/
 
+# -- Colocation oracle -- #
+
+# generated probe output (contains live tx signatures/slots)
+dashboard/report.json
+# local-only Claude settings
+.claude/settings.local.json
+
 # -- Rust -- #
 
 /target

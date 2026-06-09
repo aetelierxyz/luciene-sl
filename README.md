@@ -2,6 +2,32 @@
 
 Transparent and Stateless Agent for OnChain Financial Models.
 
+---
+
+## 🛰️ CEX → AWS Colocation Oracle
+
+A service that probes the **public** REST/WSS APIs of Binance, Coinbase and
+Kraken (spot), works out which **AWS region** hosts each exchange's engine, and
+publishes an on-chain (**Solana devnet**) recommendation of the best place to
+colocate a trading server — a latitude/longitude point plus a **10 km radius**.
+A local dashboard reads the recommendation **back from chain** and maps it.
+
+- Architecture & methodology → [ARCHITECTURE.md](ARCHITECTURE.md)
+- How to build / deploy / run (native + Docker) → [RUNBOOK.md](RUNBOOK.md)
+
+```bash
+# native, end-to-end (probe → publish on devnet → serve dashboard at :8080)
+scripts/build.sh && scripts/run-all.sh
+# or with Docker
+SOLANA_KEYPAIR=$HOME/.config/solana/id.json docker compose up --build
+```
+
+Deployed oracle program (devnet): `GH9e1ZjDTRo4WKgJYxE1TZHSFFqgXxsDVTB4manBvvh1`
+
+---
+
+## The original on-chain model program (`luciene_sl`)
+
 ## Local testing
 
 This is done in 3 steps: 

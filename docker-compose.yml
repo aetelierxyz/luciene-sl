@@ -1,0 +1,48 @@
+# Colocation oracle — off-chain services.
+#
+#   oracle    : re-probes the exchanges and republishes on-chain on a loop
+#   dashboard : serves the local map, reading the report back from Solana
+#
+# The on-chain program is deployed once from the host (scripts/deploy.sh); these
+# containers only talk to it over public RPC.
+#
+# Required: set SOLANA_KEYPAIR to an ABSOLUTE path of a funded devnet keypair,
+# e.g.  SOLANA_KEYPAIR=$HOME/.config/solana/id.json docker compose up --build
+
+services:
+  oracle:
+    build: .
+    command: ["scripts/oracle-loop.sh"]
+    environment:
+      CLUSTER: "${CLUSTER:-devnet}"
+      RPC_URL: "${RPC_URL:-https://api.devnet.solana.com}"
+      PROBE_INTERVAL: "${PROBE_INTERVAL:-300}"
+      KEYPAIR: /run/secrets/wallet.json
+      REPORT: /app/dashboard/report.json
+    volumes:
+      - report:/app/dashboard
+      - "${SOLANA_KEYPAIR:?set SOLANA_KEYPAIR to an absolute keypair path}:/run/secrets/wallet.json:ro"
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command:
+      - dashboard
+      - "--bind"
+      - "0.0.0.0:8080"
+      - "--rpc"
+      - "${RPC_URL:-https://api.devnet.solana.com}"
+      - "--cluster"
+      - "${CLUSTER:-devnet}"
+      - "--account"
+      - "${COLOC_ACCOUNT:-9cxKGbaLaeuU3sa9Z3X2DihSCBwUwwRcnm1t7EqhtbKa}"
+      - "--report"
+      - "/app/dashboard/report.json"
+    ports:
+      - "8080:8080"
+    volumes:
+      - report:/app/dashboard
+    restart: unless-stopped
+
+volumes:
+  report:
