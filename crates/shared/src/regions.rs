@@ -15,6 +15,7 @@ pub const AWS_REGIONS: &[AwsRegion] = &[
     AwsRegion { code: "eu-west-3", city: "Paris, France", lat: 48.8566, lon: 2.3522 },
     AwsRegion { code: "eu-central-1", city: "Frankfurt, Germany", lat: 50.1109, lon: 8.6821 },
     AwsRegion { code: "eu-north-1", city: "Stockholm, Sweden", lat: 59.3293, lon: 18.0686 },
+    AwsRegion { code: "ap-east-1", city: "Hong Kong", lat: 22.3193, lon: 114.1694 },
     AwsRegion { code: "ap-northeast-1", city: "Tokyo, Japan", lat: 35.6895, lon: 139.6917 },
     AwsRegion { code: "ap-northeast-2", city: "Seoul, South Korea", lat: 37.5665, lon: 126.9780 },
     AwsRegion { code: "ap-northeast-3", city: "Osaka, Japan", lat: 34.6937, lon: 135.5023 },

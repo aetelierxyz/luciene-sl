@@ -6,11 +6,12 @@ Transparent and Stateless Agent for OnChain Financial Models.
 
 ## 🛰️ CEX → AWS Colocation Oracle
 
-A service that probes the **public** REST/WSS APIs of Binance, Coinbase and
-Kraken (spot), works out which **AWS region** hosts each exchange's engine, and
-publishes an on-chain (**Solana devnet**) recommendation of the best place to
-colocate a trading server — a latitude/longitude point plus a **10 km radius**.
-A local dashboard reads the recommendation **back from chain** and maps it.
+A service that probes the **public** REST/WSS APIs of twenty-one spot exchanges
+(Binance, Coinbase, Kraken, Bybit, Bitfinex, OKX, Gemini, Bitget, Gate.io, KuCoin, HTX, MEXC, BitMart, Bitstamp, Crypto.com, Bitso, bitFlyer, Mercado Bitcoin, NDAX, Bitvavo, Bithumb), works out which
+**AWS region** hosts each exchange's engine, and publishes an on-chain
+(**Solana devnet**) recommendation of the best place to colocate a trading
+server — a latitude/longitude point plus a **10 km radius**. A local dashboard
+reads the recommendation **back from chain** and maps it.
 
 - Architecture & methodology → [ARCHITECTURE.md](ARCHITECTURE.md)
 - How to build / deploy / run (native + Docker) → [RUNBOOK.md](RUNBOOK.md)

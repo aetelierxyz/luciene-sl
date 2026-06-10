@@ -30,14 +30,20 @@ struct Args {
     keypair: Option<PathBuf>,
 }
 
-/// On-chain instruction args, borsh-encoded after the Anchor discriminator.
-/// Field order must match `coloc_oracle::set_colocation`.
+/// `init_report` args (header + allocation). Field order must match the program.
 #[derive(BorshSerialize)]
-struct SetColocationArgs {
+struct InitReportArgs {
     schema_version: u32,
     generated_unix: i64,
+    num_venues: u8,
     primary_index: u8,
-    venues: Vec<VenueRecordWire>,
+}
+
+/// `set_venue` args (one venue into a slot).
+#[derive(BorshSerialize)]
+struct SetVenueArgs {
+    index: u8,
+    venue: VenueRecordWire,
 }
 
 /// Mirrors `coloc_oracle::VenueRecord` byte-for-byte.
@@ -105,7 +111,24 @@ fn main() -> Result<()> {
 
     // Build the wire venues and resolve the primary index.
     let mut venues = Vec::new();
-    for v in &report.venues {
+    // The deployed program stores a fixed [VenueRecord; MAX_VENUES]; anchor the
+    // first MAX_VENUES (configured order) and leave any extras measured-only
+    // until the on-chain layout is bumped + redeployed.
+    let max_onchain = coloc_shared::wire::MAX_VENUES;
+    let anchored: Vec<&coloc_shared::report::VenueRecommendation> =
+        report.venues.iter().take(max_onchain).collect();
+    if report.venues.len() > max_onchain {
+        let dropped: Vec<&str> = report.venues[max_onchain..]
+            .iter()
+            .map(|v| v.exchange.as_str())
+            .collect();
+        tracing::warn!(
+            ?dropped,
+            max_onchain,
+            "more venues than on-chain capacity; these are measured-only (bump MAX_VENUES + redeploy to anchor them)"
+        );
+    }
+    for v in &anchored {
         venues.push(VenueRecordWire {
             exchange: pad::<12>(&v.exchange),
             region: pad::<16>(&v.region),
@@ -122,28 +145,44 @@ fn main() -> Result<()> {
     if venues.is_empty() {
         return Err(anyhow!("report has no venues"));
     }
+    // Primary index within the anchored subset.
     let primary_index = report
         .primary_pick
         .as_ref()
-        .and_then(|p| report.venues.iter().position(|v| &v.exchange == p))
+        .and_then(|p| anchored.iter().position(|v| &v.exchange == p))
         .unwrap_or(0) as u8;
 
-    // Anchor instruction data = discriminator ++ borsh(args).
-    let mut data = ix_discriminator("set_colocation").to_vec();
-    SetColocationArgs {
-        schema_version: report.schema_version,
-        generated_unix: report.generated_unix,
-        primary_index,
-        venues,
-    }
-    .serialize(&mut data)
-    .context("borsh-serialize args")?;
-
-    // PDA: seeds = [b"colocation", authority].
+    // PDA: seeds = [COLOCATION_SEED, authority].
     let (report_pda, _bump) =
         Pubkey::find_program_address(&[COLOCATION_SEED, payer.pubkey().as_ref()], &program_id);
 
-    let ix = Instruction {
+    let client = RpcClient::new_with_commitment(rpc_url.clone(), CommitmentConfig::confirmed());
+    let num_venues = venues.len() as u8;
+    tracing::info!(%rpc_url, payer = %payer.pubkey(), pda = %report_pda, num_venues, "publishing colocation report (chunked)");
+
+    // Helper: build, sign with a fresh blockhash, send + confirm.
+    let send = |ix: Instruction| -> Result<solana_sdk::signature::Signature> {
+        let blockhash = client.get_latest_blockhash().context("get blockhash")?;
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&payer.pubkey()),
+            &[&payer],
+            blockhash,
+        );
+        client.send_and_confirm_transaction(&tx).map_err(Into::into)
+    };
+
+    // 1) init_report — header + allocation, zeroes all slots.
+    let mut data = ix_discriminator("init_report").to_vec();
+    InitReportArgs {
+        schema_version: report.schema_version,
+        generated_unix: report.generated_unix,
+        num_venues,
+        primary_index,
+    }
+    .serialize(&mut data)
+    .context("borsh init_report args")?;
+    let init_sig = send(Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(report_pda, false),
@@ -151,21 +190,31 @@ fn main() -> Result<()> {
             AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
         ],
         data,
-    };
+    })
+    .context("send init_report")?;
+    tracing::info!(sig = %init_sig, "init_report confirmed");
 
-    let client = RpcClient::new_with_commitment(rpc_url.clone(), CommitmentConfig::confirmed());
-    tracing::info!(%rpc_url, payer = %payer.pubkey(), pda = %report_pda, "publishing colocation report");
+    // 2) set_venue — one transaction per venue (61-byte records exceed the
+    //    1232-byte tx limit when batched, so we chunk one at a time).
+    let setv_disc = ix_discriminator("set_venue");
+    for (i, v) in venues.into_iter().enumerate() {
+        let mut data = setv_disc.to_vec();
+        SetVenueArgs { index: i as u8, venue: v }
+            .serialize(&mut data)
+            .context("borsh set_venue args")?;
+        let sig = send(Instruction {
+            program_id,
+            accounts: vec![
+                AccountMeta::new(report_pda, false),
+                AccountMeta::new_readonly(payer.pubkey(), true),
+            ],
+            data,
+        })
+        .with_context(|| format!("send set_venue[{i}]"))?;
+        tracing::info!(index = i, %sig, "set_venue confirmed");
+    }
 
-    let blockhash = client.get_latest_blockhash().context("get blockhash")?;
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[&payer],
-        blockhash,
-    );
-    let sig = client
-        .send_and_confirm_transaction(&tx)
-        .context("send set_colocation tx")?;
+    let sig = init_sig;
     let slot = client.get_slot().unwrap_or_default();
 
     let cluster = if rpc_url.contains("devnet") {

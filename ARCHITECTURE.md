@@ -1,7 +1,10 @@
 # Luciene SL — CEX Colocation Oracle
 
 A service that probes the **public** REST and WSS APIs of centralized exchanges
-(Binance, Coinbase, Kraken — spot markets), determines where each exchange's
+(Binance, Coinbase, Kraken, Bybit, Bitfinex, OKX, Gemini, Bitget, Gate.io,
+KuCoin, HTX, MEXC, BitMart, Bitstamp, Crypto.com, Bitso, bitFlyer,
+Mercado Bitcoin, NDAX, Bitvavo, Bithumb — spot markets),
+determines where each exchange's
 infrastructure physically lives (AWS region / availability zone), and emits an
 on-chain recommendation of the best place to colocate a trading server.
 
@@ -66,22 +69,48 @@ confidence:
 3. **`ip-geo-nearest`** (MEDIUM) — a non-AWS, non-CDN host: geolocate via
    `ip-api.com` (no token) and snap to the nearest AWS region centroid.
 
-What this yields for the three venues (verified live):
+What this yields for the twenty-one venues (verified live):
 
 | Venue    | Detection | Evidence |
 |----------|-----------|----------|
 | Binance  | `aws-ip-range` → `ap-northeast-1` | `api1/2/3`, `stream`, `ws-api`, `data-api.binance.vision` all in Tokyo (~29/30 IPs) |
 | Coinbase | `aws-ip-range` → `us-east-1` | `api`/`ws-feed` are Cloudflare, but `ws-direct.exchange.coinbase.com` + `fix.exchange.coinbase.com` expose real `us-east-1` IPs |
+| Gemini   | `aws-ip-range` → `us-east-1` | `api.gemini.com` resolves to real `us-east-1` IPs (12/12) |
+| Gate.io  | `aws-ip-range` → `ap-northeast-1` | `api.gateio.ws` + `ws.gate.io` resolve to real Tokyo IPs |
+| Bitstamp | `aws-ip-range` → `eu-central-1` | `ws.bitstamp.net` resolves to real Frankfurt IPs (REST `www` is Imperva) |
+| Bithumb  | `aws-ip-range` → `ap-northeast-2` | `api.bithumb.com` resolves to real Seoul IPs (`pubwss` is Akamai) |
+| NDAX     | `ip-geo-nearest` → `ca-central-1` | `api.ndax.io` is OVHcloud Canada (not AWS) → geolocates to Montreal |
 | Kraken   | `curated` → `eu-west-1` (low conf) | every endpoint is Cloudflare anycast (`104.17.x`); origin not detectable |
+| Bybit    | `curated` → `ap-southeast-1` (low conf) | every endpoint is AWS CloudFront (`GLOBAL` edges); origin not detectable |
+| OKX      | `curated` → `ap-east-1` (low conf) | `www`/`ws.okx.com` are Cloudflare; documented engine in AWS Hong Kong |
+| Bitget   | `curated` → `ap-southeast-1` (low conf) | `api` Cloudflare, `ws` AWS CloudFront; documented AWS Singapore |
+| KuCoin   | `curated` → `ap-southeast-1` (low conf) | Cloudflare / CloudFront; WS needs a token, so REST-only probe |
+| HTX/Huobi| `curated` → `ap-northeast-1` (low conf) | `api` + `api-aws` are CloudFront; documented AWS Tokyo |
+| MEXC     | `curated` → `ap-northeast-1` (low conf) | REST Akamai, WS AWS CloudFront; documented AWS Tokyo |
+| Crypto.com | `curated` → `ap-southeast-1` (low conf) | Cloudflare-fronted; Singapore-based |
+| Bitso    | `curated` → `us-east-1` (low conf) | Cloudflare-fronted; LatAm infra documented in us-east-1 |
+| Mercado Bitcoin | `curated` → `sa-east-1` (low conf) | Cloudflare-fronted; Brazil-based → São Paulo |
+| bitFlyer | `curated` → `ap-northeast-1` (low conf) | on Azure Japan East behind Akamai (not AWS); nearest AWS is Tokyo |
+| Bitvavo  | `curated` → `eu-central-1` (low conf) | Cloudflare-fronted; EU region undisclosed — flagged as a guess |
+| BitMart  | `curated` → `ap-southeast-1` (very low conf) | Cloudflare-fronted; region undisclosed — flagged as a guess |
+| Bitfinex | `curated` → `ap-northeast-1` (very low conf) | Cloudflare-fronted; region undisclosed — flagged as a guess |
 
 ### Latency, stability & score
 
 Each endpoint is sampled multiple times to produce **median / min / p95 / jitter
 (stddev) / success-rate**. Per venue:
 
-- `stability = success_rate · exp(−jitter_ms / 50)`  (0..1; high = stable)
+- `stability = success_rate / (1 + jitter/median)`  (0..1; high = stable;
+  uses *relative* jitter so it is robust to absolute latency and outliers)
 - `score = 0.6 · region_confidence + 0.4 · stability`  → ranks the venues and
   selects the **primary pick**.
+
+> The on-chain account stores a fixed `[VenueRecord; MAX_VENUES]` (MAX_VENUES =
+> 21), so **all 21 venues are anchored on-chain**. Because a Solana transaction
+> caps at 1232 bytes and 21 × 61-byte records exceed that, the report is written
+> in chunks: `init_report` (header + allocation) then one `set_venue` per
+> exchange. If the dashboard ever shows more venues than the account holds, the
+> extras are flagged "measured · pending on-chain".
 
 > Probe-host RTT measures *laptop → endpoint* (often a CDN edge), so it is
 > **reported but not used to rank** venues — the colocation answer is "be in the

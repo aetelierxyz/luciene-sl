@@ -35,6 +35,10 @@
   .ex { font-size:16px; font-weight:700; text-transform:capitalize; }
   .region { color:var(--accent); font-weight:600; font-size:13px; margin-top:1px; }
   .city { color:var(--muted); font-size:12px; margin-bottom:8px; }
+  .chip { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.4px;
+          padding:2px 6px; border-radius:20px; white-space:nowrap; }
+  .chip-on { background:rgba(124,156,255,.16); color:var(--accent); }
+  .chip-off { background:rgba(251,191,36,.16); color:var(--mid); }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; font-size:12px; margin:8px 0; }
   .grid .k { color:var(--muted); }
   .grid .v { font-variant-numeric:tabular-nums; }
@@ -140,7 +144,10 @@ function render(d){
         '<span class="badge b-'+tier(v.score||v.confidence)+'">score '+Math.round((v.score||v.confidence)*100)+'%</span>'+
         '<div class="ex">'+v.exchange+(isPrimary?' ★':'')+'</div>'+
         '<div class="region">AWS '+v.region+'</div>'+
-        '<div class="city">'+v.region_city+'</div>'+
+        '<div class="city">'+v.region_city+
+          (v.anchored===false
+            ? ' <span class="chip chip-off">measured · pending on-chain</span>'
+            : ' <span class="chip chip-on">⛓ on-chain</span>')+'</div>'+
         '<div class="coord">lat '+v.lat.toFixed(5)+' · lon '+v.lon.toFixed(5)+' · r '+(v.radius_m/1000)+' km</div>'+
         '<div class="bars">'+
           bar('region confidence', v.confidence)+

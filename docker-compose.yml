@@ -35,7 +35,7 @@ services:
       - "--cluster"
       - "${CLUSTER:-devnet}"
       - "--account"
-      - "${COLOC_ACCOUNT:-9cxKGbaLaeuU3sa9Z3X2DihSCBwUwwRcnm1t7EqhtbKa}"
+      - "${COLOC_ACCOUNT:-DMr95fEeFLAdy8fGCHpcJEihxcLn5JUWTDwk5F4kxExs}"
       - "--report"
       - "/app/dashboard/report.json"
     ports:
