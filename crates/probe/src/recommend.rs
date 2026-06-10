@@ -89,9 +89,16 @@ pub async fn recommend_venue(
     };
     let sample_count: u32 = rest.iter().chain(ws.iter()).map(|m| m.samples).sum();
 
-    // Stability: success rate penalised by jitter (50 ms jitter ~ 0.37 factor).
-    let jitter_for_stab = if rest_jitter_ms > 0.0 { rest_jitter_ms } else { ws_jitter_ms };
-    let stability = (success_rate * (-jitter_for_stab / 50.0).exp()).clamp(0.0, 1.0);
+    // Stability: success rate penalised by the *relative* jitter (coefficient of
+    // variation = stddev/median), so it is robust to a venue's absolute latency
+    // and to one-off outliers. stability = success_rate / (1 + cv).
+    let (jit, med) = if rest_median_ms > 0.0 {
+        (rest_jitter_ms, rest_median_ms)
+    } else {
+        (ws_jitter_ms, ws_median_ms)
+    };
+    let cv = if med > 0.0 { jit / med } else { 0.0 };
+    let stability = (success_rate / (1.0 + cv)).clamp(0.0, 1.0);
 
     // --- region inference (evidence-based) --------------------------------
     let (region, method, confidence, evidence, ip_total, rationale) =
@@ -168,14 +175,15 @@ async fn infer_region(
     let mut cdn_ips = 0u32;
     for ip in all_ips {
         match ranges.region_for(*ip) {
+            // AWS IP in a real compute region → engine-region evidence.
             Some(region) if region_by_code(&region).is_some() => {
                 *tally.entry(region).or_default() += 1;
             }
-            _ => {
-                if crate::aws::is_cloudflare(*ip) {
-                    cdn_ips += 1;
-                }
-            }
+            // AWS IP but a non-compute service (e.g. CloudFront "GLOBAL") → CDN edge.
+            Some(_) => cdn_ips += 1,
+            // Non-AWS but known CDN (Cloudflare / Akamai) → CDN edge.
+            None if crate::aws::is_cdn_edge(*ip) => cdn_ips += 1,
+            None => {}
         }
     }
     let total = all_ips.len() as u32;

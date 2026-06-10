@@ -103,13 +103,36 @@ const CLOUDFLARE_V4: &[&str] = &[
     "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
 ];
 
-/// True if `ip` belongs to a known Cloudflare range (a CDN edge, not an origin).
-pub fn is_cloudflare(ip: IpAddr) -> bool {
+/// Well-known Akamai IPv4 CIDRs (stable, non-overlapping with AWS/Cloudflare).
+/// Akamai is a CDN, so its edge IPs hide the origin just like Cloudflare.
+const AKAMAI_V4: &[&str] = &[
+    "23.0.0.0/12", "23.32.0.0/11", "23.64.0.0/11", "23.192.0.0/11",
+    "2.16.0.0/13", "104.64.0.0/10", "184.24.0.0/13", "184.50.0.0/15",
+    "95.100.0.0/15", "96.16.0.0/15", "88.221.0.0/16", "72.246.0.0/15",
+];
+
+fn in_any(ip: IpAddr, cidrs: &[&str]) -> bool {
     let IpAddr::V4(a) = ip else { return false };
     let v = u32::from(a);
-    CLOUDFLARE_V4.iter().any(|c| {
-        matches!(parse_v4_cidr(c), Some((net, mask)) if v & mask == net)
-    })
+    cidrs
+        .iter()
+        .any(|c| matches!(parse_v4_cidr(c), Some((net, mask)) if v & mask == net))
+}
+
+/// True if `ip` belongs to a known Cloudflare range (a CDN edge, not an origin).
+pub fn is_cloudflare(ip: IpAddr) -> bool {
+    in_any(ip, CLOUDFLARE_V4)
+}
+
+/// True if `ip` belongs to a known Akamai range.
+pub fn is_akamai(ip: IpAddr) -> bool {
+    in_any(ip, AKAMAI_V4)
+}
+
+/// True if `ip` is a known CDN edge (Cloudflare or Akamai) — its origin region
+/// is hidden, so geolocating it is meaningless.
+pub fn is_cdn_edge(ip: IpAddr) -> bool {
+    is_cloudflare(ip) || is_akamai(ip)
 }
 
 fn parse_v4_cidr(cidr: &str) -> Option<(u32, u32)> {
