@@ -26,7 +26,9 @@ only. Source: `crates/probe`.
 
 - Venue medians = median across that venue's endpoint medians (REST and WSS separately).
 - `success_rate` = mean of all endpoint success rates.
-- **`stability = success_rate · exp(−jitter_ms / 50)`**  (0–1; 0 ms jitter → 1).
+- **`stability = success_rate / (1 + cv)`**, where `cv = jitter / median`
+  (coefficient of variation). Relative jitter → robust to a venue's absolute
+  latency and to one-off spikes. 0 jitter → `stability = success_rate`.
 
 ## Region evidence
 
@@ -53,7 +55,12 @@ flowchart TD
   `confidence = min(0.97, 0.75 + 0.20 · region_evidence / region_ip_total)`.
   → Binance `ap-northeast-1`, Coinbase `us-east-1`.
 - **`curated`** (CDN-fronted, origin hidden): use documented region at a fixed low
-  confidence. → Kraken `eu-west-1` (0.45) — all endpoints are Cloudflare anycast.
+  confidence. → Kraken `eu-west-1` (0.45, Cloudflare); Bybit `ap-southeast-1`
+  (0.50, AWS CloudFront); OKX `ap-east-1` (0.50, Cloudflare); Bitfinex
+  `ap-northeast-1` (0.35, Cloudflare, region undisclosed — flagged as a guess).
+  Both CDNs (Cloudflare *and* AWS CloudFront `GLOBAL`) are treated as edges,
+  never geolocated. Gemini, by contrast, exposes real `us-east-1` IPs →
+  `aws-ip-range`.
 - **`ip-geo-nearest`** (non-AWS, non-CDN): geolocate IP via `ip-api.com`, snap to
   the nearest AWS region by haversine; `confidence = clamp(0.65 − dist_km/4000, 0.30, 0.65)`.
 

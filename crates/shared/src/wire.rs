@@ -7,7 +7,7 @@
 use sha2::{Digest, Sha256};
 
 /// Max venues stored on-chain in a single report account.
-pub const MAX_VENUES: usize = 3;
+pub const MAX_VENUES: usize = 21;
 /// Fixed width of the exchange id field.
 pub const EXCHANGE_LEN: usize = 12;
 /// Fixed width of the AWS region code field.

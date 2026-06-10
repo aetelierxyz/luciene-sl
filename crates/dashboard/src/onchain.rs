@@ -67,6 +67,9 @@ pub struct OnChainVenue {
     pub ws_median_ms: u32,
     pub sample_count: u16,
     pub rationale: String,
+    /// True if this venue is stored in the on-chain account; false if it is
+    /// measured-only (off-chain report) pending an on-chain layout bump.
+    pub anchored: bool,
     // --- stability/score enrichment, merged from the local measured report ---
     /// True when the fields below were merged from the off-chain report.json.
     pub measured: bool,
@@ -144,6 +147,7 @@ pub async fn fetch(
             ws_median_ms: v.ws_latency_ms,
             sample_count: v.sample_count,
             rationale: rationale_for(method, &region, confidence),
+            anchored: true,
             measured: false,
             stability: 0.0,
             score: 0.0,
@@ -191,6 +195,40 @@ pub fn enrich(report: &mut OnChainReport, local: &coloc_shared::report::Report) 
                 v.rationale = l.rationale.clone();
             }
         }
+    }
+    // Append measured-only venues that the on-chain account can't hold yet.
+    let anchored: std::collections::HashSet<&str> =
+        report.venues.iter().map(|v| v.exchange.as_str()).collect();
+    let extra: Vec<&coloc_shared::report::VenueRecommendation> = local
+        .venues
+        .iter()
+        .filter(|l| !anchored.contains(l.exchange.as_str()))
+        .collect();
+    for l in extra {
+        report.venues.push(OnChainVenue {
+            exchange: l.exchange.clone(),
+            region: l.region.clone(),
+            region_city: l.region_city.clone(),
+            lat: l.lat,
+            lon: l.lon,
+            radius_m: l.radius_m,
+            confidence: l.confidence,
+            method: l.method,
+            rest_median_ms: l.rest_median_ms.round().max(0.0) as u32,
+            ws_median_ms: l.ws_median_ms.round().max(0.0) as u32,
+            sample_count: l.sample_count.min(u16::MAX as u32) as u16,
+            rationale: l.rationale.clone(),
+            anchored: false,
+            measured: true,
+            stability: l.stability,
+            score: l.score,
+            rest_jitter_ms: l.rest_jitter_ms,
+            ws_jitter_ms: l.ws_jitter_ms,
+            rest_p95_ms: l.rest_p95_ms,
+            success_rate: l.success_rate,
+            region_evidence: l.region_evidence,
+            region_ip_total: l.region_ip_total,
+        });
     }
 }
 

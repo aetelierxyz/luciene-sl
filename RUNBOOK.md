@@ -39,8 +39,8 @@ proving the data came from the on-chain account.
 ### Step by step
 
 ```bash
-scripts/probe.sh       # writes dashboard/report.json (real measurements)
-scripts/publish.sh     # sends set_colocation to devnet, updates report.json
+scripts/probe.sh       # writes dashboard/report.json (real measurements, 21 venues)
+scripts/publish.sh     # init_report + one set_venue per venue (chunked), updates report.json
 scripts/dashboard.sh   # serves the map, reading the PDA back via JSON-RPC
 ```
 
@@ -68,8 +68,13 @@ cargo build-sbf --manifest-path programs/coloc_oracle/Cargo.toml
 scripts/deploy.sh        # uses --max-len so rent fits a modest balance
 ```
 
-> Devnet airdrops are rate-limited. A ~200 KB program needs ~1.45 SOL of rent
-> when deployed with `--max-len` (vs ~2.9 SOL for the default 2× sizing).
+> Devnet airdrops are rate-limited. A ~230 KB program needs ~1.6 SOL of rent.
+> If an upgrade's binary outgrows the deployed `--max-len`, extend it first:
+> `solana program extend <program_id> 60000`, then re-run the deploy.
+
+The report is written **in chunks** (`init_report` + one `set_venue` per venue)
+because 21 × 61-byte records exceed the 1232-byte transaction limit. The
+publisher handles this automatically; no flags needed.
 
 ## Docker
 
@@ -85,7 +90,7 @@ Override the cluster/account/RPC via env:
 ```bash
 CLUSTER=devnet \
 RPC_URL=https://api.devnet.solana.com \
-COLOC_ACCOUNT=9cxKGbaLaeuU3sa9Z3X2DihSCBwUwwRcnm1t7EqhtbKa \
+COLOC_ACCOUNT=DMr95fEeFLAdy8fGCHpcJEihxcLn5JUWTDwk5F4kxExs \
 SOLANA_KEYPAIR=$HOME/.config/solana/id.json \
 docker compose up --build
 ```
@@ -96,7 +101,7 @@ Run just the dashboard against the already-published account:
 docker build -t coloc-oracle .
 docker run -p 8080:8080 coloc-oracle \
   dashboard --bind 0.0.0.0:8080 --cluster devnet \
-  --account 9cxKGbaLaeuU3sa9Z3X2DihSCBwUwwRcnm1t7EqhtbKa
+  --account DMr95fEeFLAdy8fGCHpcJEihxcLn5JUWTDwk5F4kxExs
 ```
 
 ## Tests
